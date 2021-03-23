@@ -27,7 +27,6 @@ namespace HTTPServer
 
         private static void HandleClient(object tcpClient)
         {
-            Console.WriteLine("хаха");
             new Client((TcpClient)tcpClient);
         }
 

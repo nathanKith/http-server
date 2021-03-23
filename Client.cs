@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.IO;
 using System.Net;
+using System.Linq;
 
 namespace HTTPServer
 {
@@ -16,39 +17,53 @@ namespace HTTPServer
             var requestMatch = Regex.Match(request.ToString(), @"^\w+\s+([^\s\?]+)[^\s]*\s+HTTP/.*|");
             if (requestMatch == Match.Empty)
             {
-                SendError(tcpClient, 400);
+                SendError(tcpClient, 400, "GET");
                 return;
             }
 
             var method = GetMethod(requestMatch.Groups[0].Value);
-            if (method != "HEAD" && method != "GET") {
-                SendError(tcpClient, 405);
+            if (method != "HEAD" && method != "GET")
+            {
+                SendError(tcpClient, 405, method);
                 return;
             }
 
             var requestURI = Uri.UnescapeDataString(requestMatch.Groups[1].Value);
-            if (requestURI.IndexOf("..") >= 0)
+            if (requestURI.IndexOf("../") >= 0)
             {
-                SendError(tcpClient, 400);
+                SendError(tcpClient, 400, method);
                 return;
             }
 
+            var noFile = false;
             if (requestURI.EndsWith("/"))
             {
+                if (requestURI.IndexOf(".") > 0)
+                {
+                    SendError(tcpClient, 404, method);
+                    return;
+                }
                 requestURI += "index.html";
+                noFile = true;
             }
 
-            var path = "www" + requestURI;
+            var path = "../../.." + requestURI;
+            // Console.WriteLine(path);
             if (!File.Exists(path))
             {
-                SendError(tcpClient, 404);
+                if (noFile)
+                {
+                    SendError(tcpClient, 403, method);
+                    return;
+                }
+                SendError(tcpClient, 404, method);
                 return;
             }
 
             var extension = requestURI.Substring(requestURI.LastIndexOf('.'));
             var contentType = GetContentType(extension);
 
-            SendResponse(tcpClient, contentType, path);
+            SendResponse(tcpClient, contentType, path, method);
 
             tcpClient.Close();
         }
@@ -72,11 +87,31 @@ namespace HTTPServer
             return request.ToString();
         }
 
-        private string GetMethod(string firstString) => firstString.Substring(0, firstString.IndexOf(' '));
+        private string GetMethod(string firstString)
+        {
+            var space = firstString.IndexOf(' ');
+            if (space < 0)
+            {
+                return "GET";
+            }
 
-        private void SendError(TcpClient tcpClient, int code)
+            return firstString.Substring(0, space);
+        }
+
+        private void SendError(TcpClient tcpClient, int code, string method)
         {
             var status = $"{code} {((HttpStatusCode)code).ToString()}";
+
+            if (method == "HEAD") 
+            {
+                var response = GetHeadersHEAD(status);
+                
+                var responseBuffer = Encoding.ASCII.GetBytes(response);
+                tcpClient.GetStream().Write(responseBuffer, 0, responseBuffer.Length);
+                tcpClient.Close();
+
+                return;
+            }
 
             var html = $"<html><body><h1>{status}</h1></body></html>";
             var headers = GetHeaders(status, "text/html", html.Length);
@@ -86,6 +121,8 @@ namespace HTTPServer
             tcpClient.Close();
         }
 
+        private string GetHeadersHEAD(string status) => $"HTTP/1.1 {status}\r\nDate: {new DateTime().ToUniversalTime().ToString()}\r\nConnection: keep-alive\r\nServer: superserver/1.0.0 (Ubuntu)\r\n\r\n";
+
         private string GetContentType(string extension)
         {
             switch (extension)
@@ -94,15 +131,19 @@ namespace HTTPServer
                 case ".html":
                     return "text/html";
                 case ".css":
-                    return "text/stylesheet";
+                    return "text/css";
                 case ".js":
-                    return "text/javascript";
+                    return "application/javascript";
                 case ".jpg":
                     return "image/jpeg";
                 case ".jpeg":
+                    return "image/jpeg";
                 case ".png":
+                    return "image/png";
                 case ".gif":
-                    return "image/" + extension.Substring(1);
+                    return "image/gif";
+                case ".swf":
+                    return "application/x-shockwave-flash";
                 default:
                     if (extension.Length > 1)
                     {
@@ -113,9 +154,9 @@ namespace HTTPServer
             }
         }
 
-        private string GetHeaders(string status, string contentType, long contentLength) => $"HTTP/1.1 {status}\nContent-Type: {contentType}\nContent-Length: {contentLength}\nDate: {new DateTime().ToUniversalTime().ToString()}\nConnection: keep-alive\n\n";
+        private string GetHeaders(string status, string contentType, long contentLength) => $"HTTP/1.1 {status}\r\nContent-Type: {contentType}\r\nContent-Length: {contentLength}\r\nDate: {new DateTime().ToUniversalTime().ToString()}\r\nConnection: keep-alive\r\nServer: superserver/1.0.0 (Ubuntu)\r\n\r\n";
 
-        private void SendResponse(TcpClient tcpClient, string contentType, string path)
+        private void SendResponse(TcpClient tcpClient, string contentType, string path, string method)
         {
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
@@ -126,6 +167,11 @@ namespace HTTPServer
                 var headersBuffer = Encoding.ASCII.GetBytes(headers);
                 tcpClient.GetStream().Write(headersBuffer, 0, headersBuffer.Length);
 
+                if (method == "HEAD")
+                {
+                    return;
+                }
+                
                 while (fs.Position < fs.Length)
                 {
                     count = fs.Read(buffer, 0, buffer.Length);
