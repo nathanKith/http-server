@@ -33,7 +33,7 @@ Transfer rate:          648861.13 [Kbytes/sec] received
 ```
 ## Нагрузочное тестирование nginx через ab:
 ```sh
- ❯ ab -n 100000 -c 8 http://127.0.0.1/httptest/wikipedia_russia.html
+~ ❯ ab -n 100000 -c 8 http://127.0.0.1/httptest/wikipedia_russia.html
 ...
 Server Software:        nginx/1.17.10
 Server Hostname:        127.0.0.1
